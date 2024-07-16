@@ -1,0 +1,119 @@
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+
+// Blynk Auth Token
+char auth[] = "YourAuthToken";
+
+// Wi-Fi credentials
+char ssid[] = "YourSSID";
+char pass[] = "YourPassword";
+
+// GPS and GSM serial connections
+SoftwareSerial gpsSerial(4, 3); // RX, TX for GPS module
+SoftwareSerial gsmSerial(7, 8); // RX, TX for GSM module
+
+TinyGPSPlus gps;
+
+// Buzzer pin
+#define BUZZER_PIN 9
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(9600);
+  gpsSerial.begin(9600);
+  gsmSerial.begin(9600);
+
+  // Initialize Blynk
+  Blynk.begin(auth, ssid, pass);
+
+  // Initialize buzzer pin as output
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // Initialize GSM module (example with SIM800)
+  sendGSMCommand("AT");
+  delay(1000);
+  sendGSMCommand("AT+CSQ"); // Signal quality check
+  delay(1000);
+  sendGSMCommand("AT+CGATT?"); // Check GPRS attach
+  delay(1000);
+  sendGSMCommand("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\""); // Set bearer parameter
+  delay(1000);
+  sendGSMCommand("AT+SAPBR=3,1,\"APN\",\"YourAPN\""); // Set APN
+  delay(1000);
+  sendGSMCommand("AT+SAPBR=1,1"); // Open bearer
+  delay(1000);
+  sendGSMCommand("AT+SAPBR=2,1"); // Query bearer
+  delay(1000);
+}
+
+void loop() {
+  // Run Blynk
+  Blynk.run();
+
+  // Read GPS data
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
+    if (gps.location.isUpdated()) {
+      float latitude = gps.location.lat();
+      float longitude = gps.location.lng();
+      Serial.print("Latitude: ");
+      Serial.println(latitude, 6);
+      Serial.print("Longitude: ");
+      Serial.println(longitude, 6);
+      
+      // Send GPS coordinates to Blynk
+      Blynk.virtualWrite(V1, String(latitude, 6));
+      Blynk.virtualWrite(V2, String(longitude, 6));
+
+      // Check for bag theft (example condition)
+      if (isBagStolen()) {
+        handleTheft(latitude, longitude);
+      }
+    }
+  }
+}
+
+bool isBagStolen() {
+  // Example condition to detect theft
+  // In a real application, this could be replaced with actual theft detection logic
+  return false;
+}
+
+void handleTheft(float latitude, float longitude) {
+  // Send alert to the user's phone
+  Blynk.notify("Bag theft detected! Sending location...");
+
+  // Sound buzzer
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(1000);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // Send SMS with GPS coordinates (example with SIM800)
+  String message = "Bag theft detected! Location: http://maps.google.com/maps?q=";
+  message += String(latitude, 6);
+  message += ",";
+  message += String(longitude, 6);
+  sendSMS("YourPhoneNumber", message);
+}
+
+void sendGSMCommand(String command) {
+  gsmSerial.println(command);
+  delay(500);
+  while (gsmSerial.available()) {
+    Serial.write(gsmSerial.read());
+  }
+}
+
+void sendSMS(String phoneNumber, String message) {
+  sendGSMCommand("AT+CMGF=1"); // Set SMS to text mode
+  delay(1000);
+  sendGSMCommand("AT+CMGS=\"" + phoneNumber + "\"");
+  delay(1000);
+  gsmSerial.print(message);
+  delay(1000);
+  gsmSerial.write(26); // Ctrl+Z to send SMS
+  delay(1000);
+}
